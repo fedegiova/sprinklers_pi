@@ -18,6 +18,7 @@ static tftp tftpServer;
 #include <wiringPi.h>
 #include <unistd.h>
 #endif
+#include <atomic>
 
 #ifdef LOGGING
 Logging log;
@@ -116,6 +117,30 @@ static EventState theCurrentEventState;
 static int32_t  theCurrentEventElapsed;
 static int32_t  theCurrentEventPaused;
 static int32_t  theCurrentEventStartTime;
+static std::atomic_ullong theFlowmeterPulseCount;
+
+static void flowmeter_isr(void)
+{
+	static uint64_t lastIsr_ns = 0;
+	timespec now;
+	clock_gettime(CLOCK_MONOTONIC,&now);
+
+	digitalRead(29); //ack the isr
+
+	uint64_t now_ns = now.tv_sec * 1000000000ll+now.tv_nsec;
+	if( !lastIsr_ns)
+		lastIsr_ns = now_ns;
+	if( now_ns - lastIsr_ns < 10000)
+		return;
+	lastIsr_ns = now_ns;
+	theFlowmeterPulseCount++;
+
+}
+
+float TotalLitres()
+{
+	return theFlowmeterPulseCount / 4.8;
+}
 
 static void io_latch()
 {
@@ -177,7 +202,7 @@ void io_setup()
 			SetOT(OT_NONE);
 			return;
 		}
-		else if (wiringPiSetup() == -1)
+		else if (wiringPiSetupSys() == -1) //setup in sys mode for interrupts
 		{
 			trace("Failed to Setup Outputs\n");
 		}
@@ -200,6 +225,8 @@ void io_setup()
 				pinMode(ZoneToIOMap[i], OUTPUT);
 				digitalWrite(ZoneToIOMap[i], (eot==OT_DIRECT_NEG)?1:0);
 			}
+			//setup the input for the flowmeter
+			wiringPiISR(29,INT_EDGE_FALLING,flowmeter_isr);
 		}
 	}
 	outState = 0;

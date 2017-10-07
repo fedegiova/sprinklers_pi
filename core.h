@@ -30,6 +30,7 @@ void ReloadEvents(bool bAllEvents = false);
 bool isZoneOn(int iNum);
 void ManualTurnOnZone(int iValve);
 void ManualTurnOffZones();
+float TotalLitres();
 void io_setup();
 
 class runStateClass

@@ -32,6 +32,7 @@
             $('#zones_lv span').text(data.zones);
             $('#schedules_lv span').text(data.schedules);
             $('#version').text("V"+data.version);
+            $('#litres').text(data.litres + "lt.");
           }});
         });
         function checkAnim(data) {
@@ -106,6 +107,7 @@
           </li>
         </ul>
         <div id="timediv"></div>
+        <div id="litres"></div>
       </div> <!-- /content -->
       <div data-role="footer" class="footer-docs" data-theme="a">
         <p>Powered by <a href="https://github.com/rszimm/sprinklers_pi/wiki">Sprinklers Pi</a> <span id="version"></span></p>
