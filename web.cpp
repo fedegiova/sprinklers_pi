@@ -260,10 +260,12 @@ static void JSONState(const KVPairs & key_value_pairs, FILE * stream_file)
 	{
 		FullZone zone;
 		LoadZone(runState.getZone() - 1, &zone);
-		long time_check = runState.getEndTime() * 60L - (nntpTimeServer.LocalNow() - previousMidnight(nntpTimeServer.LocalNow()));
+		long long time_check = runState.getEndTime() - nntpTimeServer.LocalNow();
+		if (time_check <= 0 )
+			time_check = 1;
 		if (runState.isManual())
 			time_check = 99999;
-		fprintf_P(stream_file, PSTR(",\n\t\"onzone\" : \"%s\",\n\t\"offtime\" : \"%ld\""), zone.name, time_check);
+		fprintf_P(stream_file, PSTR(",\n\t\"onzone\" : \"%s\",\n\t\"offtime\" : \"%lld\",\n\t\"paused\" : \"%d\""), zone.name, time_check,runState.isPaused());
 	}
 	fprintf_P(stream_file, (PSTR("\n}")));
 }
@@ -350,22 +352,27 @@ static bool SetQSched(const KVPairs & key_value_pairs)
 	}
 
 	if (sched == -1)
-		LoadSchedTimeEvents(0, true);
+		QuickSchedule(quickSchedule);
 	else
-		LoadSchedTimeEvents(sched);
+	{
+		trace("Quick schedule of registerd schedules unsupported\n");
+		//LoadSchedTimeEvents(sched);
+	}
 	return true;
 }
 
 static void ServeEventPage(FILE * stream_file)
 {
+
 	ServeHeader(stream_file, 200, "OK", false);
 	freeMemory();
 	const time_t timeNow = nntpTimeServer.LocalNow();
 	fprintf_P(stream_file, PSTR("<h1>%d Events</h1><h3>%02d:%02d:%02d %d/%d/%d (%d)</h3>"), iNumEvents, hour(timeNow), minute(timeNow), second(timeNow),
 			year(timeNow), month(timeNow), day(timeNow), weekday(timeNow));
 	for (uint8_t i = 0; i < iNumEvents; i++)
-		fprintf_P(stream_file, PSTR("Event [%02d] Time:%02d:%02d(%d) Command %d data %d,%d<br/>"), i, events[i].time / 60, events[i].time % 60, events[i].time,
-				events[i].command, events[i].data[0], events[i].data[1]);
+		fprintf_P(stream_file, PSTR("Event [%02d] Time:%02d:%02d(%d) Zone %d duration %d<br/>"), i, events[i].time / 60, events[i].time % 60, events[i].time,
+				events[i].zone, events[i].duration);
+
 }
 
 static void ServeSchedPage(FILE * stream_file)
@@ -476,12 +483,12 @@ static bool ManualZone(const KVPairs & key_value_pairs)
 	}
 	if ((iZoneNum >= 0) && bOn)
 	{
-		TurnOnZone(iZoneNum);
+		ManualTurnOnZone(iZoneNum);
 		runState.SetManual(true, iZoneNum);
 	}
 	else
 	{
-		TurnOffZones();
+		ManualTurnOffZones();
 		runState.SetManual(false);
 	}
 	return true;
@@ -760,7 +767,7 @@ void web::ProcessWebClients()
 		FILE * pFile = fdopen(client.GetSocket(), "w");
 #endif
 		freeMemory();
-		trace(F("Got a client\n"));
+		//trace(F("Got a client\n"));
 		//ShowSockStatus();
 		KVPairs key_value_pairs;
 		char sPage[55];
@@ -772,8 +779,9 @@ void web::ProcessWebClients()
 		}
 		else
 		{
-
-			trace(F("Page:%s\n"), sPage);
+			
+			if (strcmp(sPage, "json/state") != 0)
+				trace(F("Page:%s\n"), sPage);
 			//ShowSockStatus();
 
 			if (strcmp(sPage, "bin/setSched") == 0)

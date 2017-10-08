@@ -29,7 +29,7 @@ runStateClass runState;
 // A bitfield that defines which zones are currently on.
 int ZoneState = 0;
 
-runStateClass::runStateClass() : m_bSchedule(false), m_bManual(false), m_iSchedule(-1), m_zone(-1), m_endTime(0), m_eventTime(0)
+runStateClass::runStateClass() : m_bSchedule(false), m_bManual(false), m_iSchedule(-1), m_zone(-1), m_endTime(0), m_eventTime(0), m_paused(false)
 {
 }
 
@@ -46,6 +46,7 @@ void runStateClass::SetSchedule(bool val, int8_t iSched, const runStateClass::Du
 	LogSchedule();
 	m_bSchedule = val;
 	m_bManual = false;
+	m_paused = false;
 	m_zone = -1;
 	m_endTime = 0;
 	m_iSchedule = val?iSched:-1;
@@ -53,7 +54,7 @@ void runStateClass::SetSchedule(bool val, int8_t iSched, const runStateClass::Du
 	m_adj = adj?*adj:DurationAdjustments();
 }
 
-void runStateClass::ContinueSchedule(int8_t zone, short endTime)
+void runStateClass::ContinueSchedule(int8_t zone, int64_t endTime)
 {
 	LogSchedule();
 	m_bSchedule = true;
@@ -67,12 +68,21 @@ void runStateClass::SetManual(bool val, int8_t zone)
 {
 	LogSchedule();
 	m_bSchedule = false;
+	m_paused = false;
 	m_bManual = val;
 	m_zone = zone;
 	m_endTime = 0;
 	m_iSchedule = -1;
 	m_eventTime = nntpTimeServer.LocalNow();
 	m_adj=DurationAdjustments();
+}
+void runStateClass::PauseSchedule()
+{
+	m_paused = true;
+}
+void runStateClass::ResumeSchedule()
+{
+	m_paused = false;
 }
 
 #ifdef ARDUINO
@@ -85,8 +95,27 @@ uint8_t ZoneToIOMap[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
 #define SR_LAT_PIN  3
 #endif
 
+enum EventState{
+	CS_WAIT,
+	CS_RUN,
+	CS_PAUSED,
+	CS_DONE,
+};
+static const char * EVENT_STATES[] = {
+	"CS_WAIT",
+	"CS_RUN",
+	"CS_PAUSED",
+	"CS_DONE",
+	0,
+};
+
 static uint16_t outState;
 static uint16_t prevOutState;
+static Event    theCurrentEvent;
+static EventState theCurrentEventState;
+static int32_t  theCurrentEventElapsed;
+static int32_t  theCurrentEventPaused;
+static int32_t  theCurrentEventStartTime;
 
 static void io_latch()
 {
@@ -179,7 +208,7 @@ void io_setup()
 }
 
 
-void TurnOffZones()
+static void TurnOffZones()
 {
 	trace(F("Turning Off All Zones\n"));
 	outState = 0;
@@ -200,7 +229,7 @@ static void pumpControl(bool val)
 		outState &= ~0x01;
 }
 
-void TurnOnZone(int iValve)
+static void TurnOnZone(int iValve)
 {
 	trace(F("Turning on Zone %d\n"), iValve);
 	if ((iValve <= 0) || (iValve > NUM_ZONES))
@@ -243,22 +272,8 @@ static inline bool IsRunToday(const Schedule & sched, time_t time_now)
 	return false;
 }
 
-// Load the on/off events for a specific schedule/time or the quick schedule
-void LoadSchedTimeEvents(int8_t sched_num, bool bQuickSchedule)
+void QuickSchedule(const Schedule & sched)
 {
-	Schedule sched;
-	runStateClass::DurationAdjustments adj;
-	if (!bQuickSchedule)
-	{
-		const uint8_t iNumSchedules = GetNumSchedules();
-		if ((sched_num < 0) || (sched_num >= iNumSchedules))
-			return;
-		LoadSchedule(sched_num, &sched);
-		adj=AdjustDurations(&sched);
-	}
-	else
-		sched = quickSchedule;
-
 	const time_t local_now = nntpTimeServer.LocalNow();
 	short start_time = (local_now - previousMidnight(local_now)) / 60;
 
@@ -268,37 +283,18 @@ void LoadSchedTimeEvents(int8_t sched_num, bool bQuickSchedule)
 		LoadShortZone(k, &zone);
 		if (zone.bEnabled && (sched.zone_duration[k] > 0))
 		{
-			if (iNumEvents >= MAX_EVENTS - 1)
-			{  // make sure we have room for the on && the off events.. hence the -1
-				trace(F("ERROR: Too Many Events!\n"));
-			}
-			else
-			{
-				events[iNumEvents].time = start_time;
-				events[iNumEvents].command = 0x01; // Turn on a zone
-				events[iNumEvents].data[0] = k + 1; // Zone to turn on
-				events[iNumEvents].data[1] = (start_time + sched.zone_duration[k]) >> 8;
-				events[iNumEvents].data[2] = (start_time + sched.zone_duration[k]) & 0x00FF;
-				iNumEvents++;
-				start_time += sched.zone_duration[k];
-			}
+			Event e;
+			e.time = start_time;
+			e.duration = sched.zone_duration[k];
+			e.zone = k;
+			e.sched_num = 99;
+			e.isQuickSchedule = true;
+			eventQueuePush(e);
+			trace("Added quick schedule %d %d\n",k,e.duration);
 		}
 	}
-	// Load up the last turn off event.
-	events[iNumEvents].time = start_time;
-	events[iNumEvents].command = 0x02; // Turn off all zones
-	events[iNumEvents].data[0] = 0;
-	events[iNumEvents].data[1] = 0;
-	events[iNumEvents].data[2] = 0;
-	iNumEvents++;
-	runState.SetSchedule(true, bQuickSchedule?99:sched_num, &adj);
 }
 
-void ClearEvents()
-{
-	iNumEvents = 0;
-	runState.SetSchedule(false);
-}
 
 // TODO:  Schedules that go past midnight!
 //  Pretty simple.  When we one-shot at midnight, check to see if any outstanding events are at time >1400.  If so, move them
@@ -307,7 +303,8 @@ void ClearEvents()
 // Loads the events for the current day
 void ReloadEvents(bool bAllEvents)
 {
-	ClearEvents();
+	eventQueueClear();
+	runState.SetSchedule(false);
 	TurnOffZones();
 
 	// Make sure we're running now
@@ -330,18 +327,19 @@ void ReloadEvents(bool bAllEvents)
 				{
 					if (!bAllEvents && (start_time <= (long)(time_now - previousMidnight(time_now))/60 ))
 						continue;
-					if (iNumEvents >= MAX_EVENTS)
+					for (uint8_t k = 0; k < NUM_ZONES; k++)
 					{
-						trace(F("ERROR: Too Many Events!\n"));
-					}
-					else
-					{
-						events[iNumEvents].time = start_time;
-						events[iNumEvents].command = 0x03;  // load events for schedule i, time j
-						events[iNumEvents].data[0] = i;
-						events[iNumEvents].data[1] = j;
-						events[iNumEvents].data[2] = 0;
-						iNumEvents++;
+						ShortZone zone;
+						LoadShortZone(k, &zone);
+						if (zone.bEnabled && (sched.zone_duration[k] > 0))
+						{
+							Event e;
+							e.time = start_time;
+							e.duration = sched.zone_duration[k];
+							e.zone = k;
+							e.sched_num = i;
+							eventQueuePush(e);
+						}
 					}
 				}
 			}
@@ -349,41 +347,122 @@ void ReloadEvents(bool bAllEvents)
 	}
 }
 
+bool shouldPause()
+{
+	return false;
+}
 // Check to see if there are any events that need to be processed.
+void ManualTurnOnZone(int iValve)
+{
+	const time_t local_now = nntpTimeServer.LocalNow();
+	short start_time = (local_now - previousMidnight(local_now)) / 60;
+	Event e;
+	e.time = start_time;
+	e.duration = 60;
+	e.zone = iValve - 1;
+	e.sched_num = 99;
+	e.isManual = true;
+	eventQueuePush(e);
+	TurnOnZone(iValve);
+}
+void ManualTurnOffZones()
+{
+	//reset everything
+	TurnOffZones();
+	eventQueueClear();
+	theCurrentEvent = Event();
+	theCurrentEventState = CS_DONE;
+	runState.SetManual(false);
+}
 static void ProcessEvents()
 {
 	const time_t local_now = nntpTimeServer.LocalNow();
 	const short time_check = (local_now - previousMidnight(local_now)) / 60;
-	for (uint8_t i = 0; i < iNumEvents; i++)
+	EventState ev = theCurrentEventState;
+	switch(theCurrentEventState)
 	{
-		if (events[i].time == -1)
-			continue;
-		if (time_check >= events[i].time)
+	case CS_WAIT:
+		if( time_check >= theCurrentEvent.time)
 		{
-			switch (events[i].command)
+			int sched_num = theCurrentEvent.sched_num;
+			Schedule sched;
+			runStateClass::DurationAdjustments adj;
+			if (!theCurrentEvent.isQuickSchedule && !theCurrentEvent.isManual)
 			{
-			case 0x01:  // turn on valves in data[0]
-				TurnOnZone(events[i].data[0]);
-				runState.ContinueSchedule(events[i].data[0], events[i].data[1] << 8 | events[i].data[2]);
-				events[i].time = -1;
-				break;
-			case 0x02:  // turn off all valves
-				TurnOffZones();
-				runState.SetSchedule(false);
-				events[i].time = -1;
-				break;
-			case 0x03:  // load events for schedule(data[0]) time(data[1])
-				if (runState.isSchedule())  // If we're already running a schedule, push this off 1 minute
-					events[i].time++;
-				else
-				{
-					// Load all the individual events for the individual zones on/off
-					LoadSchedTimeEvents(events[i].data[0]);
-					events[i].time = -1;
-				}
-				break;
-			};
+				const uint8_t iNumSchedules = GetNumSchedules();
+				if ((sched_num < 0) || (sched_num >= iNumSchedules))
+					return;
+				LoadSchedule(sched_num, &sched);
+				adj=AdjustDurations(&sched);
+
+				trace("Set duration to %d from %d\n",sched.zone_duration[theCurrentEvent.zone],theCurrentEvent.duration);
+				theCurrentEvent.duration = sched.zone_duration[theCurrentEvent.zone];
+			}
+			else
+			{
+				trace("Quick/Manual duration %d\n",theCurrentEvent.duration);
+			}
+			//TODO set runState
+			//start the zone
+			TurnOnZone(theCurrentEvent.zone + 1);
+			theCurrentEventElapsed = 0;
+			theCurrentEventPaused = 0;
+			theCurrentEventStartTime = local_now;
+			theCurrentEventState = CS_RUN;
+			if(theCurrentEvent.isManual)
+			{
+				runState.SetManual(true,theCurrentEvent.zone + 1);
+			}
+			else
+			{
+				runState.SetSchedule(true, theCurrentEvent.isQuickSchedule ? 99 : sched_num, &adj);
+				runState.ContinueSchedule(theCurrentEvent.zone + 1,local_now + theCurrentEvent.duration * 60 + 1);
+			}
 		}
+		break;
+	case CS_RUN:
+		if( shouldPause())
+		{
+			//stop the zone and calculate the elapsed time
+			TurnOffZones();
+			theCurrentEventElapsed += local_now - theCurrentEventStartTime;
+			theCurrentEventStartTime = local_now;
+			theCurrentEventState = CS_PAUSED;
+			runState.PauseSchedule();
+		}
+		else if ( theCurrentEventElapsed + local_now - theCurrentEventStartTime > theCurrentEvent.duration * 60l)
+		{
+			TurnOffZones();
+			//clear the currentEvent
+			theCurrentEvent = Event();
+			theCurrentEventState = CS_DONE;
+			runState.SetSchedule(false);
+		}
+		break;
+	case CS_PAUSED:	
+		if( !shouldPause())
+		{
+			//restart
+			TurnOnZone(theCurrentEvent.zone + 1);
+			theCurrentEventPaused += local_now - theCurrentEventStartTime;
+			theCurrentEventStartTime = local_now;
+			theCurrentEventState = CS_RUN;
+			runState.ResumeSchedule();
+		}
+		break;
+	case CS_DONE:	
+		if(!theCurrentEvent.isValid())
+		{
+			theCurrentEvent = eventQueueHead();
+			eventQueuePop();
+			if(theCurrentEvent.isValid())
+				theCurrentEventState = CS_WAIT;
+		}
+		break;
+	}
+	if( theCurrentEventState != ev)
+	{
+		trace("Tran %s -> %s\n", EVENT_STATES[ev],EVENT_STATES[theCurrentEventState]);	
 	}
 }
 
@@ -406,7 +485,7 @@ void mainLoop()
 #endif
 
 		TurnOffZones();
-		ClearEvents();
+		eventQueueClear();
 
 		//Init the web server
 		if (!webServer.Init())
@@ -422,6 +501,8 @@ void mainLoop()
 
 		ReloadEvents();
 		//ShowSockStatus();
+		//
+		theCurrentEventState = CS_DONE;
 	}
 
 	// Check to see if we need to set the clock and do so if necessary.

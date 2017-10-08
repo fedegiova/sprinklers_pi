@@ -31,10 +31,7 @@
           $.ajax("json/state", {async: false, dataType: "json", error: function () { alert ("Communications Failure" ); }, success: function (data) {
             $('#zones_lv span').text(data.zones);
             $('#schedules_lv span').text(data.schedules);
-            var dt = new Date(data.timenow*1000);
             $('#version').text("V"+data.version);
-            $('#timediv').empty().append('' + pad(dt.getUTCHours(),2) + ':' + pad(dt.getUTCMinutes(),2) + ':' + pad(dt.getUTCSeconds(),2) + ' ' + pad(dt.getUTCFullYear(),4) + '/' + pad(dt.getUTCMonth()+1,2) + '/' + pad(dt.getUTCDate(),2) );
-            checkAnim(data);
           }});
         });
         function checkAnim(data) {
@@ -43,10 +40,17 @@
               timeout = (new Date().getTime()) / 1000 + parseInt(data.offtime);
               $('#szone').text(data.onzone);
               $('#sgif').css('display', 'block');
-              if (parseInt(data.offtime) == 99999)
-                $('#spantime').text("--:--");
-              else
-                window.setTimeout(function () {updateAnim();}, 1);
+              if (parseInt(data.paused))
+	      {
+		$('#spantime').text("paused");
+	      }
+	      else
+	      {
+		 if (parseInt(data.offtime) == 99999)
+	           $('#spantime').text("--:--");
+		 else
+		    updateAnim();
+	      }
             } else
               $('#sgif').css('display', 'none');
         }
@@ -57,11 +61,18 @@
             $('#spantime').text(
               Math.floor(remaining / 60).toString() + ":" + 
               ("00" + (remaining % 60).toString()).substr(-2));
-              window.setTimeout(function () {updateAnim();}, 1000);
-          } else {
-            $.getJSON("json/state", checkAnim);
           }
         }
+	function updateState(data){
+            var dt = new Date(data.timenow*1000);
+            $('#timediv').empty().append('' + pad(dt.getUTCHours(),2) + ':' + pad(dt.getUTCMinutes(),2) + ':' + pad(dt.getUTCSeconds(),2) + ' ' + pad(dt.getUTCFullYear(),4) + '/' + pad(dt.getUTCMonth()+1,2) + '/' + pad(dt.getUTCDate(),2) );
+	    checkAnim(data);
+	}
+	function updateStateTimer(){
+            $.getJSON("json/state",updateState);
+            window.setTimeout(updateStateTimer, 1000);
+	}
+        window.setTimeout(updateStateTimer, 1000);
       </script>
       <div data-theme="a" data-role="header">
         <h3>Sprinklers</h3><a data-role="button" href="Settings.htm" data-icon="gear" data-iconpos="left" class="ui-btn-right">Settings</a>

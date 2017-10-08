@@ -37,7 +37,7 @@ ${BUILD_DIR}:
 	mkdir -p ${BUILD_DIR}
 
 $(BUILD_DIR)/%.o: %.cpp
-	$(CC) $(CCFLAGS) -MF"$(@:%.o=%.d)" -MT"$(@:%.o=%.d)" -c -o "$@" "$<"
+	$(CXX) $(CCFLAGS) -MF"$(@:%.o=%.d)" -MT"$(@:%.o=%.d)" -c -o "$@" "$<"
 
 .PHONY: build_dir
 

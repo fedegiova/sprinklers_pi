@@ -21,13 +21,15 @@ extern Logging log;
 #define VERSION "0.0.0"
 #endif
 
+class Schedule;
+
 void mainLoop();
 void ClearEvents();
-void LoadSchedTimeEvents(int8_t sched_num, bool bQuickSchedule = false);
+void QuickSchedule(const Schedule & sched);
 void ReloadEvents(bool bAllEvents = false);
 bool isZoneOn(int iNum);
-void TurnOnZone(int iValve);
-void TurnOffZones();
+void ManualTurnOnZone(int iValve);
+void ManualTurnOffZones();
 void io_setup();
 
 class runStateClass
@@ -43,8 +45,14 @@ public:
 public:
 	runStateClass();
 	void SetSchedule(bool val, int8_t iSchedNum = -1, const runStateClass::DurationAdjustments * adj = 0);
-	void ContinueSchedule(int8_t zone, short endTime);
+	void ContinueSchedule(int8_t zone, int64_t endTime);
 	void SetManual(bool val, int8_t zone = -1);
+	void PauseSchedule();
+	void ResumeSchedule();
+	bool isPaused()
+	{
+		return m_paused;
+	}
 	bool isSchedule()
 	{
 		return m_bSchedule;
@@ -57,7 +65,7 @@ public:
 	{
 		return m_zone;
 	}
-	short getEndTime()
+	int64_t getEndTime()
 	{
 		return m_endTime;
 	}
@@ -67,8 +75,9 @@ private:
 	bool m_bManual;
 	int8_t m_iSchedule;
 	int8_t m_zone;
-	short m_endTime;
+	int64_t m_endTime;
 	time_t m_eventTime;
+	bool m_paused;
 	DurationAdjustments m_adj;
 };
 
