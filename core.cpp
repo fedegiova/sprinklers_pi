@@ -345,6 +345,7 @@ void ReloadEvents(bool bAllEvents)
 			}
 		}
 	}
+	trace("Loaded %d events\n",iNumEvents);
 }
 
 bool shouldPause()
@@ -402,21 +403,31 @@ static void ProcessEvents()
 			{
 				trace("Quick/Manual duration %d\n",theCurrentEvent.duration);
 			}
-			//TODO set runState
-			//start the zone
-			TurnOnZone(theCurrentEvent.zone + 1);
-			theCurrentEventElapsed = 0;
-			theCurrentEventPaused = 0;
-			theCurrentEventStartTime = local_now;
-			theCurrentEventState = CS_RUN;
-			if(theCurrentEvent.isManual)
+			if ( theCurrentEvent.duration )
 			{
-				runState.SetManual(true,theCurrentEvent.zone + 1);
+				//TODO set runState
+				//start the zone
+				TurnOnZone(theCurrentEvent.zone + 1);
+				theCurrentEventElapsed = 0;
+				theCurrentEventPaused = 0;
+				theCurrentEventStartTime = local_now;
+				theCurrentEventState = CS_RUN;
+				if(theCurrentEvent.isManual)
+				{
+					runState.SetManual(true,theCurrentEvent.zone + 1);
+				}
+				else
+				{
+					runState.SetSchedule(true, theCurrentEvent.isQuickSchedule ? 99 : sched_num, &adj);
+					runState.ContinueSchedule(theCurrentEvent.zone + 1,local_now + theCurrentEvent.duration * 60 + 1);
+				}
 			}
 			else
 			{
-				runState.SetSchedule(true, theCurrentEvent.isQuickSchedule ? 99 : sched_num, &adj);
-				runState.ContinueSchedule(theCurrentEvent.zone + 1,local_now + theCurrentEvent.duration * 60 + 1);
+				//drop event	
+				theCurrentEvent = Event();
+				theCurrentEventState = CS_DONE;
+				trace("Drop 0 duration event\n");
 			}
 		}
 		break;
