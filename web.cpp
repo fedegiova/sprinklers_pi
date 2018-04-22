@@ -220,7 +220,11 @@ static void JSONSettings(const KVPairs & key_value_pairs, FILE * stream_file)
 	fprintf_P(stream_file, PSTR("\t\"apikey\" : \"%s\",\n"), ak);
 	GetPWS(ak);
 	ak[11] = 0;
-	fprintf_P(stream_file, PSTR("\t\"pws\" : \"%s\"\n"), ak);
+	fprintf_P(stream_file, PSTR("\t\"pws\" : \"%s\",\n"), ak);
+	fprintf_P(stream_file, PSTR("\t\"tankStep1FillTimeout\" : \"%u\",\n"), tankSettings.step1FillTimeout);
+	fprintf_P(stream_file, PSTR("\t\"tankStep2FillTime\" : \"%u\",\n"), tankSettings.step2FillTime);
+	fprintf_P(stream_file, PSTR("\t\"flowmeterCheckTime\" : \"%u\",\n"), tankSettings.flowmeterCheckTime);
+	fprintf_P(stream_file, PSTR("\t\"ignoreFlowmeter\" : \"%u\"\n"), tankSettings.ignoreFlowmeter);
 	fprintf(stream_file, "}");
 }
 
@@ -253,9 +257,34 @@ static void JSONwCheck(const KVPairs & key_value_pairs, FILE * stream_file)
 static void JSONState(const KVPairs & key_value_pairs, FILE * stream_file)
 {
 	ServeHeader(stream_file, 200, "OK", false, "text/plain");
+    TankStatus ts = TankState();
 	fprintf_P(stream_file,
-			PSTR("{\n\t\"version\" : \"%s\",\n\t\"run\" : \"%s\",\n\t\"zones\" : \"%d\",\n\t\"schedules\" : \"%d\",\n\t\"timenow\" : \"%lu\",\n\t\"events\" : \"%d\",\n\t\"litres\":\"%f\""),
-			VERSION, GetRunSchedules() ? "on" : "off", GetNumEnabledZones(), GetNumSchedules(), nntpTimeServer.LocalNow(), iNumEvents,TotalLitres());
+			PSTR("{\n\t\"version\" : \"%s\",\n"
+                "\t\"run\" : \"%s\",\n"
+                "\t\"zones\" : \"%d\",\n"
+                "\t\"schedules\" : \"%d\",\n"
+                "\t\"timenow\" : \"%lu\",\n"
+                "\t\"events\" : \"%d\",\n"
+                "\t\"litres\":\"%f\",\n"
+                "\t\"tank\":\"%s\",\n"
+                "\t\"pumpState\":\"%s\",\n"
+                "\t\"tankPumpDesired\":\"%d\",\n"
+                "\t\"tankPumpOutput\":\"%d\",\n"
+                "\t\"lowLevelInput\":\"%d\",\n"
+                "\t\"emptyInput\":\"%d\"\n"
+                ),
+			VERSION, GetRunSchedules() ? "on" : "off"
+            , GetNumEnabledZones()
+            , GetNumSchedules()
+            , nntpTimeServer.LocalNow()
+            , iNumEvents,TotalLitres()
+            , ts.fsmState
+            , ts.pumpState
+            , ts.tankPumpDesired
+            , ts.tankPumpOutput
+            , ts.lowLevelInput
+            , ts.emptyInput
+    );
 	if (runState.isSchedule() || runState.isManual())
 	{
 		FullZone zone;

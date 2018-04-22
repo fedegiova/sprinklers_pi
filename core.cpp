@@ -19,6 +19,9 @@ static tftp tftpServer;
 #include <unistd.h>
 #endif
 #include <atomic>
+#include <assert.h>
+
+#define ARRAY_SIZE(a) (sizeof(a) / sizeof(*a))
 
 #ifdef LOGGING
 Logging log;
@@ -96,6 +99,10 @@ uint8_t ZoneToIOMap[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
 #define SR_LAT_PIN  3
 #endif
 
+#define PIN_TANK_FILL_PUMP 10
+#define PIN_LOW_LEVEL 25
+#define PIN_EMPTY     24
+
 enum EventState{
 	CS_WAIT,
 	CS_RUN,
@@ -110,14 +117,59 @@ static const char * EVENT_STATES[] = {
 	0,
 };
 
+/*
+ * FILLING1 : between low and request water
+ * FILLING2 : after request water ( time based )
+ */
+#define TANK_STATES \
+    TANK_STATE(TS_FILLING_1) \
+    TANK_STATE(TS_FILLING_2) \
+    TANK_STATE(TS_FULL) \
+    TANK_STATE(TS_ERROR) \
+    TANK_STATE(TS_UNKNOWN)
+
+enum TankState {
+#define TANK_STATE(s) s,
+TANK_STATES
+#undef TANK_STATE
+};
+
+static const char * TANK_STATES_STR[] = {
+#define TANK_STATE(s) #s,
+TANK_STATES
+#undef TANK_STATE
+    0
+};
+
+#define PUMP_STATES \
+    PUMP_STATE(PS_STOPPED) \
+    PUMP_STATE(PS_START_DELAY) \
+    PUMP_STATE(PS_ACTIVE) \
+
+enum PumpState {
+#define PUMP_STATE(s) s,
+PUMP_STATES
+#undef PUMP_STATE
+};
+
+static const char * PUMP_STATES_STR[] = {
+#define PUMP_STATE(s) #s,
+PUMP_STATES
+#undef PUMP_STATE
+    0
+};
+
 static uint16_t outState;
 static uint16_t prevOutState;
 static Event    theCurrentEvent;
 static EventState theCurrentEventState;
+static enum TankState  theCurrentTankState;
 static int32_t  theCurrentEventElapsed;
 static int32_t  theCurrentEventPaused;
 static int32_t  theCurrentEventStartTime;
 static std::atomic_ullong theFlowmeterPulseCount;
+static TankStatus theTankData;
+static enum PumpState thePumpState;
 
 static void flowmeter_isr(void)
 {
@@ -227,6 +279,11 @@ void io_setup()
 			}
 			//setup the input for the flowmeter
 			wiringPiISR(29,INT_EDGE_FALLING,flowmeter_isr);
+            //setup the external pump
+            digitalWrite( PIN_TANK_FILL_PUMP, 0 );
+            pinMode(PIN_TANK_FILL_PUMP, OUTPUT);
+            pinMode(PIN_LOW_LEVEL, INPUT);
+            pinMode(PIN_EMPTY, INPUT);
 		}
 	}
 	outState = 0;
@@ -504,6 +561,138 @@ static void ProcessEvents()
 	}
 }
 
+static void process_tankFillingPump()
+{
+	const time_t local_now = nntpTimeServer.LocalNow();
+    static time_t pumpStartTime;
+    switch(thePumpState)
+    {
+    case PS_STOPPED:
+        if( theTankData.tankPumpDesired )
+        {
+            pumpStartTime = local_now;
+            digitalWrite( PIN_TANK_FILL_PUMP, 1 );
+            thePumpState = PS_START_DELAY;
+        }
+        break;
+    case PS_START_DELAY:
+        if( local_now - pumpStartTime > tankSettings.flowmeterCheckTime )
+            thePumpState = PS_ACTIVE;
+        if( !theTankData.tankPumpDesired )
+        {
+            thePumpState = PS_STOPPED;
+            digitalWrite( PIN_TANK_FILL_PUMP, 0 );
+        }
+        break;
+    case PS_ACTIVE:
+        //TODO insert flowmeter check
+        if( local_now - pumpStartTime > 1200 )
+        {
+            trace("Max pump running time exceeded\n");
+            thePumpState = PS_STOPPED;
+            digitalWrite( PIN_TANK_FILL_PUMP, 0 );
+        }
+        if( !theTankData.tankPumpDesired )
+        {
+            thePumpState = PS_STOPPED;
+            digitalWrite( PIN_TANK_FILL_PUMP, 0 );
+        }
+        break;
+    }
+}
+static void startTankFilling()
+{
+    theTankData.tankPumpDesired = 1;
+}
+static void stopTankFilling()
+{
+    theTankData.tankPumpDesired = 0;
+}
+static bool tankNeedsRefill()
+{
+    return theTankData.lowLevelInput;
+}
+static bool tankEmpty()
+{
+    return theTankData.emptyInput;
+}
+static void process_tank()
+{
+	const time_t local_now = nntpTimeServer.LocalNow();
+    static time_t tankFillingStart;
+
+    theTankData.lowLevelInput = digitalRead( PIN_LOW_LEVEL );
+    theTankData.emptyInput = digitalRead( PIN_EMPTY );
+
+    switch( theCurrentTankState )
+    {
+    case TS_UNKNOWN:
+        if( !tankNeedsRefill() && !tankEmpty() )
+        {
+            theCurrentTankState = TS_FULL;
+        }
+        else if ( !tankNeedsRefill() && tankEmpty() )
+        {
+            //invalid combination
+            if( local_now % 10 == 0 )
+                trace("INVALID tank combination, stay here\n");
+        }
+        else if ( tankNeedsRefill() && !tankEmpty() )
+        {
+            //we're between level 1 and 2, start with FILL 1
+            startTankFilling();
+            tankFillingStart = local_now;
+            theCurrentTankState = TS_FILLING_1;
+        }
+        else /*if ( tankNeedsRefill() && tankEmpty() ) */
+        {
+            //we're empty, start full refill
+            startTankFilling();
+            tankFillingStart = local_now;
+            theCurrentTankState = TS_FILLING_1;
+        }
+        break;
+    case TS_FULL:
+        if( tankNeedsRefill() || tankEmpty())
+        {
+            tankFillingStart = local_now;
+            startTankFilling();
+            theCurrentTankState = TS_FILLING_1;
+        }
+        break;
+    case TS_FILLING_1:
+        if ( !tankNeedsRefill() )
+        {
+            tankFillingStart = local_now;
+            theCurrentTankState = TS_FILLING_2;
+        }
+        if ( local_now - tankFillingStart > 60 )
+        {
+            trace("Tank filling 1 timeout\n");
+            stopTankFilling();
+            theCurrentTankState = TS_ERROR;
+        }
+        break;
+    case TS_FILLING_2:
+        if ( local_now - tankFillingStart > 10 )
+        {
+            stopTankFilling();
+            theCurrentTankState = TS_FULL;
+        }
+        break;
+    case TS_ERROR:
+        break;
+    }
+}
+TankStatus TankState()
+{
+    assert( theCurrentTankState < ARRAY_SIZE( TANK_STATES_STR ) );
+    assert( thePumpState < ARRAY_SIZE ( PUMP_STATES_STR ) );
+    theTankData.fsmState =  TANK_STATES_STR[ theCurrentTankState ];
+    theTankData.pumpState = PUMP_STATES_STR[ thePumpState ];
+    return theTankData;
+}
+TankSettings tankSettings;
 void mainLoop()
 {
 	static bool firstLoop = true;
@@ -541,6 +730,12 @@ void mainLoop()
 		//ShowSockStatus();
 		//
 		theCurrentEventState = CS_DONE;
+        theCurrentTankState = TS_UNKNOWN;
+        thePumpState = PS_STOPPED;
+        tankSettings.step2FillTime = 10;
+        tankSettings.step1FillTimeout = 60;
+        tankSettings.flowmeterCheckTime = 5;
+        tankSettings.ignoreFlowmeter = 1;
 	}
 
 	// Check to see if we need to set the clock and do so if necessary.
@@ -562,6 +757,8 @@ void mainLoop()
 	webServer.ProcessWebClients();
 
 	// Process any pending events.
+    process_tank();
+    process_tankFillingPump();
 	ProcessEvents();
 
 #ifdef ARDUINO

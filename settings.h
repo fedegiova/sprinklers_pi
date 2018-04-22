@@ -99,8 +99,16 @@ bool IsFirstBoot();
 void ResetEEPROM();
 int GetNumEnabledZones();
 
+struct TankSettings{
+    int32_t  step2FillTime;
+    int32_t  step1FillTimeout;
+    int32_t  flowmeterCheckTime;
+    bool     ignoreFlowmeter;
+};
+
 // For storing info related to the Quick Schedule
 extern Schedule quickSchedule;
+extern TankSettings tankSettings;
 
 #endif
 

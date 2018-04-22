@@ -31,6 +31,15 @@ bool isZoneOn(int iNum);
 void ManualTurnOnZone(int iValve);
 void ManualTurnOffZones();
 float TotalLitres();
+struct TankStatus{
+    const char * fsmState;
+    const char * pumpState;
+    bool         tankPumpOutput;
+    bool         tankPumpDesired;
+    bool         lowLevelInput;
+    bool         emptyInput;
+};
+TankStatus TankState();
 void io_setup();
 
 class runStateClass

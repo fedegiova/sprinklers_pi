@@ -347,6 +347,22 @@ bool SetSettings(const KVPairs & key_value_pairs)
 		{
 			SetUsePWS(strcmp(value, "pws") == 0);
 		}
+		else if (strcmp(key, "tankStep2FillTime") == 0)
+		{
+            tankSettings.step2FillTime = strtol(value,0,10);
+		}
+		else if (strcmp(key, "tankStep1FillTimeout") == 0)
+		{
+            tankSettings.step1FillTimeout = strtol(value,0,10);
+		}
+		else if (strcmp(key, "flowmeterCheckTime") == 0)
+		{
+            tankSettings.flowmeterCheckTime = strtol(value,0,10);
+		}
+		else if (strcmp(key, "ignoreFlowmeter") == 0)
+		{
+            tankSettings.ignoreFlowmeter = !!strtoul(value,0,10);
+		}
 
 	}
 	return true;

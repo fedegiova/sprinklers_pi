@@ -33,6 +33,10 @@
             $('#schedules_lv span').text(data.schedules);
             $('#version').text("V"+data.version);
             $('#litres').text(data.litres + "lt.");
+            var tankStatusSummary;
+            tankStatusSummary = data.tank + " - " + data.pumpState + " pump-desired: " + data.tankPumpDesired
+                    + ' low-level: ' + data.lowLevelInput + ' empty: ' + data.emptyInput;
+            $('#tank-st').text(tankStatusSummary);
           }});
         });
         function checkAnim(data) {
@@ -108,6 +112,7 @@
         </ul>
         <div id="timediv"></div>
         <div id="litres"></div>
+        <div id="tank-st"></div>
       </div> <!-- /content -->
       <div data-role="footer" class="footer-docs" data-theme="a">
         <p>Powered by <a href="https://github.com/rszimm/sprinklers_pi/wiki">Sprinklers Pi</a> <span id="version"></span></p>

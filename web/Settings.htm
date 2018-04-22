@@ -30,13 +30,17 @@
 	      NV(data, 'ot');
 	      NV(data, 'webport');
 	      NV(data, 'sadj');
+	      NV(data, 'tankStep1FillTimeout');
+	      NV(data, 'tankStep2FillTime');
+	      NV(data, 'flowmeterCheckTime');
+	      NV(data, 'ignoreFlowmeter');
             }});
         });
         
         function NV(data, e) {
           if (e in data) {
             $('#settings #'+e+'div').css('display','block');
-            if ((e=='ot') || (e=='wutype')) {
+            if ((e=='ot') || (e=='wutype') || ( e == 'ignoreFlowmeter' )) {
               $('#'+e+'div input[type="radio"]').prop("checked",false).checkboxradio("refresh");
               $("#settings #"+e+data[e]).prop("checked", true).checkboxradio("refresh");
             } else if (e=='sadj') 
@@ -116,7 +120,7 @@
             <label for="sadj">Seasonal Adjust %</label>
             <input type="range" name="sadj" id="sadj" value="" min="0" max="200" />
           </div>
-	  <div id="otdiv" data-role="fieldcontain">
+	      <div id="otdiv" data-role="fieldcontain">
             <fieldset data-role="controlgroup" data-type="vertical" data-mini="true">
               <legend>Output:</legend>
               <input type="radio" name="ot" id="ot0" value="0"/>
@@ -128,6 +132,18 @@
               <input type="radio" name="ot" id="ot3" value="3" />
               <label for="ot3">OpenSprinkler</label>
             </fieldset>
+          </div>
+          <div id="tankStep1FillTimeoutdiv" data-role="fieldcontain">
+            <label for="tankStep1FillTimeout">Fill timeout 1</label>
+            <input type="number" name="tankStep1FillTimeout" id="tankStep1FillTimeout" value="" min="0" max="600" />
+          </div>
+          <div id="tankStep2FillTimediv" data-role="fieldcontain">
+            <label for="tankStep2FillTime">Fill Time</label>
+            <input type="number" name="tankStep2FillTime" id="tankStep2FillTime" value="" min="0" max="60" />
+          </div>
+          <div id="ignoreFlowmeterdiv" data-role="fieldcontain">
+            <label for="ignoreFlowmter">Ignore flowmeter</label>
+            <input type="checkbox" name="ignoreFlowmeter" id="ignoreFlowmeter" value="" />
           </div>
         </form>
       </div> <!-- /content -->
