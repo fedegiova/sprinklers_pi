@@ -10,7 +10,7 @@
 class EthernetServer;
 
 #define NUM_KEY_VALUES 50
-#define KEY_SIZE 10
+#define KEY_SIZE 32
 #define VALUE_SIZE 20
 
 struct KVPairs

@@ -168,6 +168,8 @@ static int32_t  theCurrentEventElapsed;
 static int32_t  theCurrentEventPaused;
 static int32_t  theCurrentEventStartTime;
 static std::atomic_ullong theFlowmeterPulseCount;
+static uint32_t theLowLevelDebounce;
+static uint32_t theEmptyLevelDebounce;
 static TankStatus theTankData;
 static enum PumpState thePumpState;
 
@@ -207,7 +209,8 @@ static void io_latch()
 		break;
 	case OT_DIRECT_POS:
 	case OT_DIRECT_NEG:
-		for (int i = 0; i <= NUM_ZONES; i++)
+		for (int i = 0; i <= 5; i++) //@fede avoid to write over the 5th zone
+					     //otherwise this loop used to stop the pump
 		{
 			if (eot == OT_DIRECT_POS)
 				digitalWrite(ZoneToIOMap[i], (outState&(0x01<<i))?1:0);
@@ -241,24 +244,25 @@ static void io_latch()
 	prevOutState = outState;
 }
 
+#define TOSTR(a) #a
 void io_setup()
 {
 	const EOT eot = GetOT();
 	if ((eot != OT_NONE))
 	{
 
-#ifndef ARDUINO
 		if (geteuid() != 0)
 		{
 			trace("You need to be root to run this.  Setting output mode to NONE\n");
 			SetOT(OT_NONE);
 			return;
 		}
-		else if (wiringPiSetupSys() == -1) //setup in sys mode for interrupts
+		//cannot use sys mode since it'll broke
+		//pin numbers since they use BCM numbering scheme
+		if (wiringPiSetup() == -1)
 		{
 			trace("Failed to Setup Outputs\n");
 		}
-#endif
 		if (eot == OT_OPEN_SPRINKLER)
 		{
 			pinMode(SR_CLK_PIN, OUTPUT);
@@ -278,12 +282,13 @@ void io_setup()
 				digitalWrite(ZoneToIOMap[i], (eot==OT_DIRECT_NEG)?1:0);
 			}
 			//setup the input for the flowmeter
-			wiringPiISR(29,INT_EDGE_FALLING,flowmeter_isr);
+			//wiringPiISR(29,INT_EDGE_FALLING,flowmeter_isr);
             //setup the external pump
             digitalWrite( PIN_TANK_FILL_PUMP, 0 );
             pinMode(PIN_TANK_FILL_PUMP, OUTPUT);
             pinMode(PIN_LOW_LEVEL, INPUT);
             pinMode(PIN_EMPTY, INPUT);
+			trace("Setup pin mode\n");
 		}
 	}
 	outState = 0;
@@ -434,7 +439,7 @@ void ReloadEvents(bool bAllEvents)
 
 bool shouldPause()
 {
-	return false;
+      return theTankData.emptyInput == 1;
 }
 // Check to see if there are any events that need to be processed.
 void ManualTurnOnZone(int iValve)
@@ -571,6 +576,7 @@ static void process_tankFillingPump()
         if( theTankData.tankPumpDesired )
         {
             pumpStartTime = local_now;
+	    trace("*** TURN ON\n");
             digitalWrite( PIN_TANK_FILL_PUMP, 1 );
             thePumpState = PS_START_DELAY;
         }
@@ -594,6 +600,7 @@ static void process_tankFillingPump()
         }
         if( !theTankData.tankPumpDesired )
         {
+	    trace("*** TURN OFF\n");
             thePumpState = PS_STOPPED;
             digitalWrite( PIN_TANK_FILL_PUMP, 0 );
         }
@@ -616,13 +623,26 @@ static bool tankEmpty()
 {
     return theTankData.emptyInput;
 }
+static unsigned char debounce(unsigned char in, unsigned char prev, uint32_t *counter)
+{
+	if( in == prev) {
+	    *counter = 0;
+	    return prev;
+	}
+	if( *counter < 20){ 
+		*counter = *counter + 1;
+		return prev;
+	}
+	*counter = 0;
+	return in;
+}
 static void process_tank()
 {
-	const time_t local_now = nntpTimeServer.LocalNow();
+    const time_t local_now = nntpTimeServer.LocalNow();
     static time_t tankFillingStart;
 
-    theTankData.lowLevelInput = digitalRead( PIN_LOW_LEVEL );
-    theTankData.emptyInput = digitalRead( PIN_EMPTY );
+    theTankData.lowLevelInput = debounce(digitalRead( PIN_LOW_LEVEL ),theTankData.lowLevelInput, &theLowLevelDebounce);
+    theTankData.emptyInput = debounce(digitalRead( PIN_EMPTY ), theTankData.emptyInput, &theEmptyLevelDebounce);
 
     switch( theCurrentTankState )
     {
@@ -666,7 +686,7 @@ static void process_tank()
             tankFillingStart = local_now;
             theCurrentTankState = TS_FILLING_2;
         }
-        if ( local_now - tankFillingStart > 60 )
+        if ( local_now - tankFillingStart > tankSettings.step1FillTimeout )
         {
             trace("Tank filling 1 timeout\n");
             stopTankFilling();
@@ -674,7 +694,7 @@ static void process_tank()
         }
         break;
     case TS_FILLING_2:
-        if ( local_now - tankFillingStart > 10 )
+        if ( local_now - tankFillingStart > tankSettings.step2FillTime )
         {
             stopTankFilling();
             theCurrentTankState = TS_FULL;
@@ -732,8 +752,10 @@ void mainLoop()
 		theCurrentEventState = CS_DONE;
         theCurrentTankState = TS_UNKNOWN;
         thePumpState = PS_STOPPED;
-        tankSettings.step2FillTime = 10;
-        tankSettings.step1FillTimeout = 60;
+	theLowLevelDebounce = 0;
+	theEmptyLevelDebounce = 0;
+        tankSettings.step2FillTime = 45;
+        tankSettings.step1FillTimeout = 120;
         tankSettings.flowmeterCheckTime = 5;
         tankSettings.ignoreFlowmeter = 1;
 	}

@@ -8,12 +8,15 @@
 #include "settings.h"
 #include <unistd.h>
 #include <signal.h>
+#include <wiringPi.h>
 
 bool bTermSignal = false;
 
 void signal_callback_handler(int signum)
 {
    printf("Caught signal %d\n",signum);
+   digitalWrite( 0, 0 );
+   digitalWrite( 10, 0 );
    bTermSignal = true;
 }
 
