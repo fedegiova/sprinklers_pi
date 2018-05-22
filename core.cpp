@@ -20,8 +20,17 @@ static tftp tftpServer;
 #endif
 #include <atomic>
 #include <assert.h>
+#include <time.h>
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof(*a))
+
+time_t getTimeMonotonic()
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC,&ts);
+    return ts.tv_sec;
+}
+
 
 #ifdef LOGGING
 Logging log;
@@ -472,6 +481,8 @@ static void ProcessEvents()
 	switch(theCurrentEventState)
 	{
 	case CS_WAIT:
+		if(!theCurrentEvent.isValid())
+            theCurrentEventState = CS_DONE;
 		if( time_check >= theCurrentEvent.time)
 		{
 			int sched_num = theCurrentEvent.sched_num;
@@ -521,6 +532,8 @@ static void ProcessEvents()
 		}
 		break;
 	case CS_RUN:
+		if(!theCurrentEvent.isValid())
+            theCurrentEventState = CS_DONE;
 		if( shouldPause())
 		{
 			//stop the zone and calculate the elapsed time
@@ -540,6 +553,8 @@ static void ProcessEvents()
 		}
 		break;
 	case CS_PAUSED:	
+		if(!theCurrentEvent.isValid())
+            theCurrentEventState = CS_DONE;
 		if( !shouldPause())
 		{
 			//restart
@@ -556,7 +571,10 @@ static void ProcessEvents()
 			theCurrentEvent = eventQueueHead();
 			eventQueuePop();
 			if(theCurrentEvent.isValid())
+            {
+                trace("Current event time: %d zone:%d\n",theCurrentEvent.time,theCurrentEvent.zone);
 				theCurrentEventState = CS_WAIT;
+            }
 		}
 		break;
 	}
@@ -568,7 +586,7 @@ static void ProcessEvents()
 
 static void process_tankFillingPump()
 {
-	const time_t local_now = nntpTimeServer.LocalNow();
+	const time_t local_now = getTimeMonotonic();
     static time_t pumpStartTime;
     switch(thePumpState)
     {
@@ -638,7 +656,7 @@ static unsigned char debounce(unsigned char in, unsigned char prev, uint32_t *co
 }
 static void process_tank()
 {
-    const time_t local_now = nntpTimeServer.LocalNow();
+    const time_t local_now = getTimeMonotonic();
     static time_t tankFillingStart;
 
     theTankData.lowLevelInput = debounce(digitalRead( PIN_LOW_LEVEL ),theTankData.lowLevelInput, &theLowLevelDebounce);

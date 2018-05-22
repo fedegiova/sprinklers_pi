@@ -5,7 +5,7 @@ VERSION=1.1.3
 
 BUILD_DIR=build
 CC=gcc
-CCFLAGS=-O3 -Wall -fmessage-length=0 -MMD -MP -DLOGGING -DVERSION=\"$(VERSION)\"
+CCFLAGS=-O3 -g3 -Wall -fmessage-length=0 -MMD -MP -DLOGGING -DVERSION=\"$(VERSION)\"
 
 CPP_SRCS += \
 Event.cpp \
