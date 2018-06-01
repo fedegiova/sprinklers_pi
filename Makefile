@@ -5,7 +5,7 @@ VERSION=1.1.3
 
 BUILD_DIR=build
 CC=gcc
-CCFLAGS=-O3 -g3 -Wall -fmessage-length=0 -MMD -MP -DLOGGING -DVERSION=\"$(VERSION)\"
+CCFLAGS=-O3 -g3 -Wall -pthread -fmessage-length=0 -MMD -MP -DLOGGING -DVERSION=\"$(VERSION)\"
 
 CPP_SRCS += \
 Event.cpp \
@@ -18,7 +18,7 @@ sprinklers_pi.cpp \
 sysreset.cpp \
 web.cpp 
 
-LIBS := -lsqlite3 -lwiringPi
+LIBS := -lsqlite3 -lwiringPi -lrt -pthread
 LIBNAME=sprinklers_pi
 
 OBJS=$(CPP_SRCS:%.cpp=$(BUILD_DIR)/%.o)

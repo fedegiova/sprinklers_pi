@@ -21,6 +21,10 @@ static tftp tftpServer;
 #include <atomic>
 #include <assert.h>
 #include <time.h>
+#include <thread>
+#include <poll.h>
+#include <fcntl.h>
+#include <sys/types.h>
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof(*a))
 
@@ -111,6 +115,7 @@ uint8_t ZoneToIOMap[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
 #define PIN_TANK_FILL_PUMP 10
 #define PIN_LOW_LEVEL 25
 #define PIN_EMPTY     24
+#define K_FLUX 0.017 //lt / impulso
 
 enum EventState{
 	CS_WAIT,
@@ -154,6 +159,7 @@ TANK_STATES
     PUMP_STATE(PS_STOPPED) \
     PUMP_STATE(PS_START_DELAY) \
     PUMP_STATE(PS_ACTIVE) \
+    PUMP_STATE(PS_ERROR) \
 
 enum PumpState {
 #define PUMP_STATE(s) s,
@@ -177,32 +183,47 @@ static int32_t  theCurrentEventElapsed;
 static int32_t  theCurrentEventPaused;
 static int32_t  theCurrentEventStartTime;
 static std::atomic_ullong theFlowmeterPulseCount;
+static std::thread        theFlowmeterThread;
+static volatile bool      flowmeterShouldRun;
 static uint32_t theLowLevelDebounce;
 static uint32_t theEmptyLevelDebounce;
 static TankStatus theTankData;
 static enum PumpState thePumpState;
 
-static void flowmeter_isr(void)
+static void flowmeter_thread(void)
 {
-	static uint64_t lastIsr_ns = 0;
-	timespec now;
-	clock_gettime(CLOCK_MONOTONIC,&now);
+    system("echo 21 > /sys/class/gpio/export");
+    system("echo in > /sys/class/gpio/gpio21/direction");
+    system("echo rising > /sys/class/gpio/gpio21/edge");
 
-	digitalRead(29); //ack the isr
+    int gpioFd = open("/sys/class/gpio/gpio21/value", O_RDONLY);
+    if(gpioFd == -1)
+    {
+        printf("Gpio open error\n");
+        return;
+    }
 
-	uint64_t now_ns = now.tv_sec * 1000000000ll+now.tv_nsec;
-	if( !lastIsr_ns)
-		lastIsr_ns = now_ns;
-	if( now_ns - lastIsr_ns < 10000)
-		return;
-	lastIsr_ns = now_ns;
-	theFlowmeterPulseCount++;
+    while(flowmeterShouldRun)
+    {
+        struct pollfd pf[1] = {};
+        pf[0].fd = gpioFd;
+        pf[0].events = POLLPRI | POLLERR;
 
+        int rv = poll(pf,1,100);
+        if( rv != 1) continue;
+
+        lseek(gpioFd,0,SEEK_SET);
+        char v;
+        read(gpioFd,&v,1);
+        if( v == '1')
+            theFlowmeterPulseCount++;
+    }
+    close(gpioFd);
 }
 
 float TotalLitres()
 {
-	return theFlowmeterPulseCount / 4.8;
+	return theFlowmeterPulseCount * K_FLUX;
 }
 
 static void io_latch()
@@ -292,6 +313,8 @@ void io_setup()
 			}
 			//setup the input for the flowmeter
 			//wiringPiISR(29,INT_EDGE_FALLING,flowmeter_isr);
+            flowmeterShouldRun = 1;
+            theFlowmeterThread = std::thread(&flowmeter_thread);
             //setup the external pump
             digitalWrite( PIN_TANK_FILL_PUMP, 0 );
             pinMode(PIN_TANK_FILL_PUMP, OUTPUT);
@@ -588,20 +611,27 @@ static void process_tankFillingPump()
 {
 	const time_t local_now = getTimeMonotonic();
     static time_t pumpStartTime;
+    static time_t errorStartTime;
+    static time_t lastFlowChanged;
+    static uint64_t flowPulseCount;
     switch(thePumpState)
     {
     case PS_STOPPED:
         if( theTankData.tankPumpDesired )
         {
             pumpStartTime = local_now;
-	    trace("*** TURN ON\n");
+            trace("*** TURN ON\n");
             digitalWrite( PIN_TANK_FILL_PUMP, 1 );
             thePumpState = PS_START_DELAY;
         }
         break;
     case PS_START_DELAY:
         if( local_now - pumpStartTime > tankSettings.flowmeterCheckTime )
+        {
+            flowPulseCount = theFlowmeterPulseCount;
+            lastFlowChanged = local_now;
             thePumpState = PS_ACTIVE;
+        }
         if( !theTankData.tankPumpDesired )
         {
             thePumpState = PS_STOPPED;
@@ -609,19 +639,35 @@ static void process_tankFillingPump()
         }
         break;
     case PS_ACTIVE:
-        //TODO insert flowmeter check
+        if( theFlowmeterPulseCount > flowPulseCount * K_FLUX * 10) //10 lt
+        {
+            flowPulseCount = theFlowmeterPulseCount;
+            lastFlowChanged = local_now;
+        }
+        if( local_now - lastFlowChanged > 5)
+        {
+            trace("Flow interrupted\n");
+            thePumpState = PS_ERROR;
+            errorStartTime = local_now;
+            digitalWrite( PIN_TANK_FILL_PUMP, 0 );
+        }
         if( local_now - pumpStartTime > 1200 )
         {
             trace("Max pump running time exceeded\n");
-            thePumpState = PS_STOPPED;
+            thePumpState = PS_ERROR;
+            errorStartTime = local_now;
             digitalWrite( PIN_TANK_FILL_PUMP, 0 );
         }
         if( !theTankData.tankPumpDesired )
         {
-	    trace("*** TURN OFF\n");
+            trace("*** TURN OFF\n");
             thePumpState = PS_STOPPED;
             digitalWrite( PIN_TANK_FILL_PUMP, 0 );
         }
+        break;
+    case PS_ERROR:
+        if( local_now - errorStartTime > 4* 3600)
+            thePumpState = PS_STOPPED;
         break;
     }
 }
@@ -773,7 +819,7 @@ void mainLoop()
 	theLowLevelDebounce = 0;
 	theEmptyLevelDebounce = 0;
         tankSettings.step2FillTime = 45;
-        tankSettings.step1FillTimeout = 120;
+        tankSettings.step1FillTimeout = 140;
         tankSettings.flowmeterCheckTime = 5;
         tankSettings.ignoreFlowmeter = 1;
 	}
@@ -812,3 +858,12 @@ void mainLoop()
 	// latch any output modifications
 	io_latch();
 }
+
+void stop()
+{
+    uint64_t pls = theFlowmeterPulseCount;
+    trace("Total flowmeter pulses %llu\n",pls);
+    flowmeterShouldRun = 0;
+    theFlowmeterThread.join();
+}
+

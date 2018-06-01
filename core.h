@@ -24,6 +24,7 @@ extern Logging log;
 class Schedule;
 
 void mainLoop();
+void stop();
 void ClearEvents();
 void QuickSchedule(const Schedule & sched);
 void ReloadEvents(bool bAllEvents = false);
