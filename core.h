@@ -35,10 +35,13 @@ float TotalLitres();
 struct TankStatus{
     const char * fsmState;
     const char * pumpState;
+    const char * filterState;
     bool         tankPumpOutput;
     bool         tankPumpDesired;
+    bool         filterWaterDesired;
     bool         lowLevelInput;
     bool         emptyInput;
+    bool         fullInput;
 };
 TankStatus TankState();
 void io_setup();

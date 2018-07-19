@@ -69,8 +69,8 @@
 	    checkAnim(data);
             $('#litres').text(data.litres + "lt.");
             var tankStatusSummary;
-            tankStatusSummary = data.tank + " - " + data.pumpState + " pump-desired: " + data.tankPumpDesired
-                    + ' low-level: ' + data.lowLevelInput + ' empty: ' + data.emptyInput;
+            tankStatusSummary = data.tank + " - " + data.pumpState + ' - ' + data.filterState + " pump-desired: " + data.tankPumpDesired
+                    + ' low-level: ' + data.lowLevelInput + ' empty: ' + data.emptyInput + 'full:' + data.fullInput;
             $('#tank-st').text(tankStatusSummary);
 	}
 	function updateStateTimer(){

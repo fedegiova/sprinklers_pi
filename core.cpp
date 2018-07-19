@@ -115,6 +115,8 @@ uint8_t ZoneToIOMap[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
 #define PIN_TANK_FILL_PUMP 10
 #define PIN_LOW_LEVEL 25
 #define PIN_EMPTY     24
+#define PIN_FULL      28
+
 #define K_FLUX 0.017 //lt / impulso
 
 enum EventState{
@@ -174,6 +176,25 @@ PUMP_STATES
     0
 };
 
+#define FILTER_STATES \
+    FILTER_STATE(FS_IDLE) \
+    FILTER_STATE(FS_FILLING) \
+    FILTER_STATE(FS_EMPTING) \
+    FILTER_STATE(FS_ERROR) \
+
+enum FilterState {
+#define FILTER_STATE(s) s,
+FILTER_STATES
+#undef FILTER_STATE
+};
+
+static const char * FILTER_STATES_STR[] = {
+#define FILTER_STATE(s) #s,
+FILTER_STATES
+#undef FILTER_STATE
+    0
+};
+
 static uint16_t outState;
 static uint16_t prevOutState;
 static Event    theCurrentEvent;
@@ -187,8 +208,10 @@ static std::thread        theFlowmeterThread;
 static volatile bool      flowmeterShouldRun;
 static uint32_t theLowLevelDebounce;
 static uint32_t theEmptyLevelDebounce;
+static uint32_t theFullLevelDebounce;
 static TankStatus theTankData;
 static enum PumpState thePumpState;
+static enum FilterState theFilterState;
 
 static void flowmeter_thread(void)
 {
@@ -473,6 +496,10 @@ bool shouldPause()
 {
       return theTankData.emptyInput == 1;
 }
+bool shouldResume()
+{
+      return theTankData.lowLevelInput == 0;
+}
 // Check to see if there are any events that need to be processed.
 void ManualTurnOnZone(int iValve)
 {
@@ -506,7 +533,7 @@ static void ProcessEvents()
 	case CS_WAIT:
 		if(!theCurrentEvent.isValid())
             theCurrentEventState = CS_DONE;
-		if( time_check >= theCurrentEvent.time)
+		if( time_check >= theCurrentEvent.time && theCurrentTankState == TS_FULL)
 		{
 			int sched_num = theCurrentEvent.sched_num;
 			Schedule sched;
@@ -578,7 +605,7 @@ static void ProcessEvents()
 	case CS_PAUSED:	
 		if(!theCurrentEvent.isValid())
             theCurrentEventState = CS_DONE;
-		if( !shouldPause())
+		if( !shouldResume())
 		{
 			//restart
 			TurnOnZone(theCurrentEvent.zone + 1);
@@ -639,12 +666,12 @@ static void process_tankFillingPump()
         }
         break;
     case PS_ACTIVE:
-        if( theFlowmeterPulseCount > flowPulseCount * K_FLUX * 10) //10 lt
+        if( theFlowmeterPulseCount - flowPulseCount > K_FLUX * 2) //2 lt
         {
             flowPulseCount = theFlowmeterPulseCount;
             lastFlowChanged = local_now;
         }
-        if( local_now - lastFlowChanged > 5)
+        if( local_now - lastFlowChanged > 10)
         {
             trace("Flow interrupted\n");
             thePumpState = PS_ERROR;
@@ -673,9 +700,17 @@ static void process_tankFillingPump()
 }
 static void startTankFilling()
 {
-    theTankData.tankPumpDesired = 1;
+    theTankData.filterWaterDesired = 1;
 }
 static void stopTankFilling()
+{
+    theTankData.filterWaterDesired = 0;
+}
+static void startFilterFilling()
+{
+    theTankData.tankPumpDesired = 1;
+}
+static void stopFilterFilling()
 {
     theTankData.tankPumpDesired = 0;
 }
@@ -707,6 +742,7 @@ static void process_tank()
 
     theTankData.lowLevelInput = debounce(digitalRead( PIN_LOW_LEVEL ),theTankData.lowLevelInput, &theLowLevelDebounce);
     theTankData.emptyInput = debounce(digitalRead( PIN_EMPTY ), theTankData.emptyInput, &theEmptyLevelDebounce);
+    theTankData.fullInput = debounce(!digitalRead( PIN_FULL ), theTankData.fullInput, &theFullLevelDebounce);
 
     switch( theCurrentTankState )
     {
@@ -768,12 +804,56 @@ static void process_tank()
         break;
     }
 }
+static void process_filter()
+{
+    const time_t local_now = getTimeMonotonic();
+    static time_t filterFillingStart;
+    static time_t filterEmptingStart;
+    static time_t filterErrorStart;
+    switch(theFilterState)
+    {
+    case FS_IDLE:
+        if( theTankData.filterWaterDesired && !theTankData.fullInput)
+        {
+            startFilterFilling();
+            theFilterState = FS_FILLING;
+            filterFillingStart = local_now;
+        }
+        break;
+    case FS_FILLING:
+        if( theTankData.fullInput || !theTankData.filterWaterDesired)
+        {
+            stopFilterFilling();
+            theFilterState = FS_EMPTING;
+            filterEmptingStart = local_now;
+        }
+        if( local_now > filterFillingStart + 5 * 60 )
+        {
+            stopFilterFilling();
+            theFilterState = FS_ERROR;
+            filterErrorStart = local_now;
+            trace("Filter timeout\n");
+        }
+        break;
+    case FS_EMPTING:
+        if( local_now > filterEmptingStart + 60 )
+            theFilterState = FS_IDLE;
+        break;
+    case FS_ERROR:
+        if( local_now > filterErrorStart + 3600 )
+            theFilterState = FS_IDLE;
+        break;
+    }
+}
+
 TankStatus TankState()
 {
     assert( theCurrentTankState < ARRAY_SIZE( TANK_STATES_STR ) );
     assert( thePumpState < ARRAY_SIZE ( PUMP_STATES_STR ) );
+    assert( theFilterState < ARRAY_SIZE ( FILTER_STATES_STR ) );
     theTankData.fsmState =  TANK_STATES_STR[ theCurrentTankState ];
     theTankData.pumpState = PUMP_STATES_STR[ thePumpState ];
+    theTankData.filterState = FILTER_STATES_STR[ theFilterState ];
     return theTankData;
 }
 TankSettings tankSettings;
@@ -815,11 +895,12 @@ void mainLoop()
 		//
 		theCurrentEventState = CS_DONE;
         theCurrentTankState = TS_UNKNOWN;
+        theFilterState = FS_IDLE;
         thePumpState = PS_STOPPED;
 	theLowLevelDebounce = 0;
 	theEmptyLevelDebounce = 0;
         tankSettings.step2FillTime = 45;
-        tankSettings.step1FillTimeout = 140;
+        tankSettings.step1FillTimeout = 15*60;
         tankSettings.flowmeterCheckTime = 5;
         tankSettings.ignoreFlowmeter = 1;
 	}
@@ -845,6 +926,7 @@ void mainLoop()
 	// Process any pending events.
     process_tank();
     process_tankFillingPump();
+    process_filter();
 	ProcessEvents();
 
 #ifdef ARDUINO

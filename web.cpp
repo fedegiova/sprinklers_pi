@@ -268,10 +268,12 @@ static void JSONState(const KVPairs & key_value_pairs, FILE * stream_file)
                 "\t\"litres\":\"%f\",\n"
                 "\t\"tank\":\"%s\",\n"
                 "\t\"pumpState\":\"%s\",\n"
+                "\t\"filterState\":\"%s\",\n"
                 "\t\"tankPumpDesired\":\"%d\",\n"
                 "\t\"tankPumpOutput\":\"%d\",\n"
                 "\t\"lowLevelInput\":\"%d\",\n"
-                "\t\"emptyInput\":\"%d\"\n"
+                "\t\"emptyInput\":\"%d\",\n"
+                "\t\"fullInput\":\"%d\"\n"
                 ),
 			VERSION, GetRunSchedules() ? "on" : "off"
             , GetNumEnabledZones()
@@ -280,10 +282,12 @@ static void JSONState(const KVPairs & key_value_pairs, FILE * stream_file)
             , iNumEvents,TotalLitres()
             , ts.fsmState
             , ts.pumpState
+            , ts.filterState
             , ts.tankPumpDesired
             , ts.tankPumpOutput
             , ts.lowLevelInput
             , ts.emptyInput
+            , ts.fullInput
     );
 	if (runState.isSchedule() || runState.isManual())
 	{
