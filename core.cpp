@@ -739,6 +739,7 @@ static void process_tank()
 {
     const time_t local_now = getTimeMonotonic();
     static time_t tankFillingStart;
+    static time_t errorTime;
 
     theTankData.lowLevelInput = debounce(digitalRead( PIN_LOW_LEVEL ),theTankData.lowLevelInput, &theLowLevelDebounce);
     theTankData.emptyInput = debounce(digitalRead( PIN_EMPTY ), theTankData.emptyInput, &theEmptyLevelDebounce);
@@ -791,6 +792,7 @@ static void process_tank()
             trace("Tank filling 1 timeout\n");
             stopTankFilling();
             theCurrentTankState = TS_ERROR;
+            errorTime = local_now;
         }
         break;
     case TS_FILLING_2:
@@ -801,6 +803,11 @@ static void process_tank()
         }
         break;
     case TS_ERROR:
+        if( local_now > errorTime + 4*3600)
+        {
+            trace("Autorecover tank error\n");
+            theCurrentTankState = TS_UNKNOWN;
+        }
         break;
     }
 }
@@ -900,7 +907,7 @@ void mainLoop()
 	theLowLevelDebounce = 0;
 	theEmptyLevelDebounce = 0;
         tankSettings.step2FillTime = 45;
-        tankSettings.step1FillTimeout = 15*60;
+        tankSettings.step1FillTimeout = 18*60;
         tankSettings.flowmeterCheckTime = 5;
         tankSettings.ignoreFlowmeter = 1;
 	}
