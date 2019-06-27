@@ -494,3 +494,9 @@ void mainLoop()
 	// latch any output modifications
 	io_latch();
 }
+
+void stop()
+{
+    TurnOffZones();
+    io_latch();
+}
