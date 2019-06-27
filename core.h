@@ -30,6 +30,7 @@ void TurnOnZone(int iValve);
 void TurnOffZones();
 void io_setup();
 void io_latchNow();
+void stop();
 
 class runStateClass
 {

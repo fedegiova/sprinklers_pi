@@ -66,6 +66,7 @@ int main(int argc, char **argv)
 		mainLoop();
 		usleep(1000);  // sleep for 1 ms
 	}
+    stop();
 	trace("Exiting.\n");
 	return 0;
 }
