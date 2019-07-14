@@ -18,7 +18,7 @@
 #define NUM_ZONES 6
 #else
 // maximum number of zones allowed
-#define NUM_ZONES 15
+#define NUM_ZONES 5
 #endif
 
 // Uncomment the next line if you want schedules to turn off when you use manual control
@@ -40,6 +40,7 @@
 // DarkSky Weather https://darksky.net/dev
 // WARNING: this API will only work through the end of 2021
 //#define WEATHER_DARKSKY
+#define WEATHER_DARKSKY
 
 // Weather Underground
 // IMPORTANT: Do not use. No longer working.

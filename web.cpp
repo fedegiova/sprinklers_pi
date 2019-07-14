@@ -312,8 +312,13 @@ static void JSONState(const KVPairs & key_value_pairs, FILE * stream_file)
 {
 	ServeHeader(stream_file, 200, "OK", false, "text/plain");
 	fprintf_P(stream_file,
-			PSTR("{\n\t\"version\" : \"%s\",\n\t\"run\" : \"%s\",\n\t\"zones\" : \"%d\",\n\t\"schedules\" : \"%d\",\n\t\"timenow\" : \"%lu\",\n\t\"events\" : \"%d\""),
-			VERSION, GetRunSchedules() ? "on" : "off", GetNumEnabledZones(), GetNumSchedules(), nntpTimeServer.LocalNow(), iNumEvents);
+			PSTR("{\n\t\"version\" : \"%s\",\n\t\"run\" : \"%s\",\n\t\"zones\" : \"%d\",\n\t\"schedules\" : \"%d\",\n\t\"timenow\" : \"%lu\",\n\t\"events\" : \"%d\","
+            "\n\"pumpState\":\"%s\","
+            "\n\"flow\":\"%f\","
+            "\n\"litres\":\"%f\","
+            "\n\"uptime\":\"%ld\""),
+			VERSION, GetRunSchedules() ? "on" : "off", GetNumEnabledZones(), GetNumSchedules(), nntpTimeServer.LocalNow(), iNumEvents,pumpState(),flow(),TotalLitres(),uptime());
+
 	if (runState.isSchedule() || runState.isManual())
 	{
 		FullZone zone;
@@ -855,7 +860,7 @@ void web::ProcessWebClients()
 		FILE * pFile = fdopen(client.GetSocket(), "w");
 #endif
 		freeMemory();
-		trace(F("Got a client\n"));
+		//trace(F("Got a client\n"));
 		//ShowSockStatus();
 		KVPairs key_value_pairs;
 		char sPage[55];
@@ -868,7 +873,7 @@ void web::ProcessWebClients()
 		else
 		{
 
-			trace(F("Page:%s\n"), sPage);
+			//trace(F("Page:%s\n"), sPage);
 			//ShowSockStatus();
 
 			if (strcmp(sPage, "bin/setSched") == 0)

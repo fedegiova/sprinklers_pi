@@ -3,6 +3,7 @@
   
   <head>
     <title>Sprinklers Pi</title>
+    <meta charset="utf-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="icon" type="image/png" href="/sprinkler.png">
     <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -122,6 +123,33 @@
             $.getJSON("json/state", checkAnim);
           }
         }
+
+        function toDuration (sec_num) {
+            var days   =  Math.floor(sec_num / 3600 / 24);
+            var hours   = Math.floor(sec_num / 3600);
+            var minutes = Math.floor((sec_num - (hours * 3600)) / 60);
+            var seconds = sec_num - (hours * 3600) - (minutes * 60);
+
+            if (hours   < 10) {hours   = "0"+hours;}
+            if (minutes < 10) {minutes = "0"+minutes;}
+            if (seconds < 10) {seconds = "0"+seconds;}
+            return ""+days+" days "+ hours + " hours +"+minutes+":"+seconds;
+        }
+        function updateState(data){
+              var dt = new Date(data.timenow*1000);
+              $('#timediv').empty().append('' + pad(dt.getUTCHours(),2) + ':' + pad(dt.getUTCMinutes(),2) + ':' + pad(dt.getUTCSeconds(),2) + ' ' + pad(dt.getUTCFullYear(),4) + '/' + pad(dt.getUTCMonth()+1,2) + '/' + pad(dt.getUTCDate(),2) );
+              $('#litres').text(data.litres + " lt.");
+              $('#flow').text(data.flow + " lt/min.");
+              var tankStatusSummary;
+              tankStatusSummary = data.pumpState;
+              $('#tank-st').text(tankStatusSummary);
+              $('#uptime').text(toDuration(data.uptime));
+        }
+        function updateStateTimer(){
+              $.getJSON("json/state",updateState);
+              window.setTimeout(updateStateTimer, 1000);
+        }
+        window.setTimeout(updateStateTimer, 1000);
       </script>
       <div data-theme="a" data-role="header">
         <h3>Sprinklers</h3><a data-role="button" href="Settings.htm" data-icon="gear" data-iconpos="left" class="ui-btn-right">Settings</a>
@@ -159,6 +187,10 @@
           </li>
         </ul>
         <div id="timediv"></div>
+        <div id="litres"></div>
+        <div id="flow"></div>
+        <div id="tank-st"></div>
+        <div id="uptime"></div>
       </div> <!-- /content -->
       <div data-role="footer" class="footer-docs" data-theme="a">
         <p>Powered by <a href="https://github.com/rszimm/sprinklers_pi/wiki">Sprinklers Pi</a> <span id="version"></span></p>

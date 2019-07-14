@@ -32,6 +32,11 @@ void io_setup();
 void io_latchNow();
 void stop();
 
+float TotalLitres();
+float flow();
+const char * pumpState();
+time_t uptime();
+
 class runStateClass
 {
 public:

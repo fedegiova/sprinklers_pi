@@ -22,7 +22,7 @@ sprinklers_pi.cpp \
 sysreset.cpp \
 web.cpp 
 
-LIBS := -lsqlite3 -lwiringPi
+LIBS := -lsqlite3 -lwiringPi -lrt -lpthread
 LIBNAME=sprinklers_pi
 
 OBJS=$(CPP_SRCS:%.cpp=$(BUILD_DIR)/%.o)

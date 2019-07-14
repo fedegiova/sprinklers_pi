@@ -33,6 +33,29 @@ static tftp tftpServer;
 #include <unistd.h>
 #include <sys/stat.h>
 #endif
+#include <atomic>
+#include <assert.h>
+#include <time.h>
+#include <thread>
+#include <poll.h>
+#include <fcntl.h>
+#include <sys/types.h>
+
+#define ARRAY_SIZE(a) (sizeof(a) / sizeof(*a))
+
+time_t getTimeMonotonic()
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC,&ts);
+    return ts.tv_sec;
+}
+int64_t getTimeMonotonicMs()
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC,&ts);
+    return ts.tv_sec*1000ll + ts.tv_nsec / 1000000;
+}
+
 
 #ifdef LOGGING
 Logging logger;
@@ -103,8 +126,90 @@ uint8_t ZoneToIOMap[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
 #define SR_LAT_PIN  3
 #endif
 
+#define UTILITY_WATER_GPIO 10
+#define FLOWMETER_CHECK_TIME 15
+#define K_FLUX 0.0181 //lt / impulso
+
+#define PUMP_STATES \
+    PUMP_STATE(PS_STOPPED) \
+    PUMP_STATE(PS_START_DELAY) \
+    PUMP_STATE(PS_ACTIVE) \
+    PUMP_STATE(PS_ERROR) \
+    PUMP_STATE(PS_PRIMING) \
+    PUMP_STATE(PS_UTILITY_WATER) \
+
+enum PumpState {
+#define PUMP_STATE(s) s,
+PUMP_STATES
+#undef PUMP_STATE
+};
+
+static const char * PUMP_STATES_STR[] = {
+#define PUMP_STATE(s) #s,
+PUMP_STATES
+#undef PUMP_STATE
+    0
+};
+
 static uint16_t outState;
 static uint16_t prevOutState;
+static std::atomic_ullong theFlowmeterPulseCount;
+static std::thread        theFlowmeterThread;
+static volatile bool      flowmeterShouldRun;
+static float              theFlow;
+static enum PumpState thePumpState;
+static time_t             theStartupTime;
+
+
+static void flowmeter_thread(void)
+{
+    system("echo 21 > /sys/class/gpio/export");
+    system("echo in > /sys/class/gpio/gpio21/direction");
+    system("echo rising > /sys/class/gpio/gpio21/edge");
+
+    int gpioFd = open("/sys/class/gpio/gpio21/value", O_RDONLY);
+    if(gpioFd == -1)
+    {
+        printf("Gpio open error\n");
+        return;
+    }
+
+    while(flowmeterShouldRun)
+    {
+        struct pollfd pf[1] = {};
+        pf[0].fd = gpioFd;
+        pf[0].events = POLLPRI | POLLERR;
+
+        int rv = poll(pf,1,100);
+        if( rv != 1) continue;
+
+        lseek(gpioFd,0,SEEK_SET);
+        char v;
+        read(gpioFd,&v,1);
+        if( v == '1')
+            theFlowmeterPulseCount++;
+    }
+    close(gpioFd);
+}
+
+float TotalLitres()
+{
+	return theFlowmeterPulseCount * K_FLUX;
+}
+float flow()
+{
+    return theFlow;
+}
+time_t uptime()
+{
+    //monotonic cloc starts from 0
+    return getTimeMonotonic() - theStartupTime;
+}
+const char * pumpState()
+{
+    assert( thePumpState < ARRAY_SIZE ( PUMP_STATES_STR ) );
+    return PUMP_STATES_STR[ thePumpState ];
+}
 
 static void io_latch()
 {
@@ -132,7 +237,8 @@ static void io_latch()
 		break;
 	case OT_DIRECT_POS:
 	case OT_DIRECT_NEG:
-		for (int i = 0; i <= NUM_ZONES; i++)
+		//@fede: start with 1 to prevent control of the pump here
+		for (int i = 1; i <= NUM_ZONES; i++)
 		{
 			if (eot == OT_DIRECT_POS)
 				digitalWrite(ZoneToIOMap[i], (outState&(0x01<<i))?1:0);
@@ -206,6 +312,11 @@ void io_setup()
 				pinMode(ZoneToIOMap[i], OUTPUT);
 				digitalWrite(ZoneToIOMap[i], (eot==OT_DIRECT_NEG)?1:0);
 			}
+			//setup the input for the flowmeter
+			//wiringPiISR(29,INT_EDGE_FALLING,flowmeter_isr);
+            flowmeterShouldRun = 1;
+            theFlowmeterThread = std::thread(&flowmeter_thread);
+			trace("Setup pin mode\n");
 		}
 	}
 	outState = 0;
@@ -229,6 +340,11 @@ bool isZoneOn(int iNum)
 	if ((iNum <= 0) || (iNum > NUM_ZONES))
 		return false;
 	return outState & (0x01 << iNum);
+}
+
+bool pumpDesiredState()
+{
+	return outState & (0x01);
 }
 
 static void pumpControl(bool val)
@@ -424,7 +540,139 @@ static void ProcessEvents()
 		}
 	}
 }
+static void process_tankFillingPump()
+{
+	const time_t local_now = getTimeMonotonic();
+	const int64_t now_ms = getTimeMonotonicMs();
+    static time_t pumpStartTime;
+    static time_t errorStartTime;
+    static time_t primingStartTime;
+    static time_t lastFlowChanged;
+    static int64_t lastFlowSampled;
+    static uint64_t flowPulseCount;
+    static uint64_t flowLastSampledPulseCount;
+    static bool     primingDone;
 
+
+    if( now_ms - lastFlowSampled > 1000 )
+    {
+        float f = ( theFlowmeterPulseCount - flowLastSampledPulseCount ) * K_FLUX / (  now_ms - lastFlowSampled ) * 1000. * 60;
+        theFlow = theFlow * 0.8 + f * 0.2;
+        flowLastSampledPulseCount = theFlowmeterPulseCount;
+        lastFlowSampled = now_ms;
+    }
+
+
+    switch(thePumpState)
+    {
+    case PS_STOPPED:
+        if( pumpDesiredState() )
+        {
+            pumpStartTime = local_now;
+            trace("*** TURN ON\n");
+            digitalWrite( 0, 1 );
+            thePumpState = PS_START_DELAY;
+            primingDone = false;
+        }
+        break;
+    case PS_START_DELAY:
+        if( local_now - pumpStartTime > FLOWMETER_CHECK_TIME )
+        {
+            flowPulseCount = theFlowmeterPulseCount;
+            lastFlowChanged = local_now;
+            thePumpState = PS_ACTIVE;
+        }
+        if( !pumpDesiredState() )
+        {
+            thePumpState = PS_STOPPED;
+            digitalWrite( 0, 0 );
+        }
+        break;
+    case PS_ACTIVE:
+        if( theFlowmeterPulseCount - flowPulseCount > K_FLUX * 2) //2 lt
+        {
+            flowPulseCount = theFlowmeterPulseCount;
+            lastFlowChanged = local_now;
+        }
+        if( local_now - lastFlowChanged > 10)
+        {
+            if( !primingDone )
+            {
+                trace("Flow interrupted, try to prime the pump\n");
+                thePumpState = PS_PRIMING;
+                primingStartTime = local_now;
+                digitalWrite( 0, 0 );
+                digitalWrite( UTILITY_WATER_GPIO, 1 );
+            }
+            else
+            {
+                trace("Still no flow, switch to utility water\n");
+                thePumpState = PS_UTILITY_WATER;
+                digitalWrite( 0, 0 );
+                digitalWrite( UTILITY_WATER_GPIO, 1 );
+            }
+        }
+        if( local_now - pumpStartTime > 30*60 )
+        {
+            trace("Max pump running time exceeded\n");
+            thePumpState = PS_ERROR;
+            errorStartTime = local_now;
+            digitalWrite( 0, 0 );
+        }
+        if( !pumpDesiredState() )
+        {
+            trace("*** TURN OFF\n");
+            thePumpState = PS_STOPPED;
+
+            //discharge pressure with section 1
+            digitalWrite( 1, 1 );
+            //stop pump
+            digitalWrite( 0, 0 );
+            usleep(300*100);
+            trace("Discarge pressure\n");
+            digitalWrite( 1, 0 );
+        }
+        break;
+    case PS_PRIMING:
+        //pump some water in reverse to fill the pipe
+        if( local_now - primingStartTime > 2*60 )
+        {
+            trace("Priming done, try to restart the pump\n");
+            trace("*** TURN ON\n");
+            pumpStartTime = local_now;
+            primingDone = true;
+            digitalWrite( 0, 1 );
+            digitalWrite( UTILITY_WATER_GPIO, 0 );
+            thePumpState = PS_START_DELAY;
+        }
+        if( !pumpDesiredState() )
+        {
+            thePumpState = PS_STOPPED;
+            digitalWrite( 0, 0 );
+            digitalWrite( UTILITY_WATER_GPIO, 0 );
+        }
+        break;
+    case PS_UTILITY_WATER:
+        if( local_now - pumpStartTime > 30*60 )
+        {
+            trace("Max pump running time exceeded\n");
+            thePumpState = PS_ERROR;
+            errorStartTime = local_now;
+            digitalWrite( UTILITY_WATER_GPIO, 0 );
+        }
+        if( !pumpDesiredState() )
+        {
+            trace("*** TURN OFF\n");
+            thePumpState = PS_STOPPED;
+            digitalWrite( UTILITY_WATER_GPIO, 0 );
+        }
+        break;
+    case PS_ERROR:
+        if( local_now - errorStartTime > 4* 3600)
+            thePumpState = PS_STOPPED;
+        break;
+    }
+}
 void mainLoop()
 {
 	static bool firstLoop = true;
@@ -460,6 +708,8 @@ void mainLoop()
 
 		ReloadEvents();
 		//ShowSockStatus();
+		thePumpState = PS_STOPPED;
+        theStartupTime = getTimeMonotonic();
 	}
 
 	// Check to see if we need to set the clock and do so if necessary.
@@ -481,6 +731,7 @@ void mainLoop()
 	webServer.ProcessWebClients();
 
 	// Process any pending events.
+	process_tankFillingPump();
 	ProcessEvents();
 
 #ifdef ARDUINO
@@ -499,4 +750,13 @@ void stop()
 {
     TurnOffZones();
     io_latch();
+    process_tankFillingPump();
+    
+    uint64_t pls = theFlowmeterPulseCount;
+    trace("Total flowmeter pulses %llu\n",pls);
+    flowmeterShouldRun = 0;
+    theFlowmeterThread.join();
+
+    digitalWrite( 0, 0 );
+    digitalWrite( UTILITY_WATER_GPIO, 0 );
 }
