@@ -608,7 +608,7 @@ static void process_tankFillingPump()
             {
                 trace("Still no flow, switch to utility water\n");
                 thePumpState = PS_UTILITY_WATER;
-                digitalWrite( 0, 0 );
+                digitalWrite( 0, 1 );
                 digitalWrite( UTILITY_WATER_GPIO, 1 );
             }
         }
@@ -659,12 +659,14 @@ static void process_tankFillingPump()
             thePumpState = PS_ERROR;
             errorStartTime = local_now;
             digitalWrite( UTILITY_WATER_GPIO, 0 );
+            digitalWrite( 0, 0 );
         }
         if( !pumpDesiredState() )
         {
             trace("*** TURN OFF\n");
             thePumpState = PS_STOPPED;
             digitalWrite( UTILITY_WATER_GPIO, 0 );
+            digitalWrite( 0, 0 );
         }
         break;
     case PS_ERROR:
