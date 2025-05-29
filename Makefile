@@ -4,7 +4,7 @@
 VERSION := $(shell cat version.txt )
 
 BUILD_DIR=build
-CXXFLAGS=-O3 -Wall -fmessage-length=0 -MMD -MP -DLOGGING -DVERSION=\"$(VERSION)\" -Wno-psabi -std=c++11 
+CXXFLAGS=-O3 -Wall -pthread -fmessage-length=0 -MMD -MP -DLOGGING -DVERSION=\"$(VERSION)\" -Wno-psabi -std=c++11 
 
 CPP_SRCS += \
 Event.cpp \
@@ -22,7 +22,7 @@ sprinklers_pi.cpp \
 sysreset.cpp \
 web.cpp 
 
-LIBS := -lsqlite3 -lwiringPi -lrt -lpthread
+LIBS := -lsqlite3 -lwiringPi -lrt -lpthread -latomic
 LIBNAME=sprinklers_pi
 
 OBJS=$(CPP_SRCS:%.cpp=$(BUILD_DIR)/%.o)
