@@ -159,16 +159,11 @@ static void GetData(const Weather::Settings & settings,const char *m_OpenMeteoAP
 	char * lon = strtok(NULL, ", ");
 
 	// get weather json
-	if (timestamp != 0) {
-        snprintf(cmd, sizeof(cmd),
-                 "/usr/bin/curl -sS -o /tmp/OpenMeteo.json 'https://%s/v1/forecast?latitude=%s&longitude=%s&hourly=temperature_2m&daily=relative_humidity_2m_max,relative_humidity_2m_min,rain_sum,wind_speed_10m_mean,uv_index_max&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch&timezone=Europe%%2FBerlin&past_days=1&forecast_days=1&models=icon_seamless'",
+	snprintf(cmd, sizeof(cmd),
+                 "/usr/bin/curl -sS -o /tmp/OpenMeteo.json 'https://%s/v1/forecast?latitude=%s&longitude=%s&hourly=temperature_2m&daily=relative_humidity_2m_max,relative_humidity_2m_min,rain_sum,wind_speed_10m_mean,uv_index_max&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch&timezone=auto&past_days=1&forecast_days=1&models=best_match'",
                  m_OpenMeteoAPIHost, lat, lon);
-    } else {
-        snprintf(cmd, sizeof(cmd),
-                 "/usr/bin/curl -sS -o /tmp/OpenMeteo.json 'https://%s/v1/forecast?latitude=%s&longitude=%s&hourly=temperature_2m&daily=relative_humidity_2m_max,relative_humidity_2m_min,rain_sum,wind_speed_10m_mean,uv_index_max&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch&timezone=Europe%%2FBerlin&past_days=1&forecast_days=1&models=icon_seamless'",
-                 m_OpenMeteoAPIHost, lat, lon);
-	}
 	trace("cmd: %s\n",cmd);
+	free(loc); // free memory after strdup()
 	
 	FILE *fh;
 	char buf[500];
@@ -178,32 +173,34 @@ static void GetData(const Weather::Settings & settings,const char *m_OpenMeteoAP
 	if ((fh = popen(cmd, "r")) != NULL) {
 	    size_t byte_count = fread(buf, 1, sizeof(buf) - 1, fh);
 	    buf[byte_count] = 0;
-	}
+	    pclose(fh);
+	} else {
+    	trace("popen failed\n");
+    	return;
+    }
 	
-	(void) pclose(fh);
 	trace("curl error output: %s\n",buf);
 
 	json j;
 	std::ifstream ifs("/tmp/OpenMeteo.json");
+	if (!ifs.is_open() || ifs.peek() == std::ifstream::traits_type::eof()) {
+	    trace("No response from curl. Response file missing or empty\n");
+	    return;
+	}
 	ifs >> j;
-	
 	ParseResponse(j, ret);
 
 	ifs.close();
 	
-	if (!ret->valid)
-	{
-		if (ret->keynotfound)
-			trace("Invalid OpenMeteo Key\n");
-		else
-			trace("Bad OpenMeteo Response\n");
+	if (!ret->valid) {
+		trace("Bad OpenMeteo Response\n");
 	}
 }
 
 Weather::ReturnVals OpenMeteo::InternalGetVals(const Weather::Settings & settings) const
 {
 	ReturnVals vals = {0};
-	const time_t 	now = nntpTimeServer.utcNow();
+	const time_t now = nntpTimeServer.utcNow();
 
 	// today and yesterday
 	trace("Get weather for today and from yesterday\n");
