@@ -29,7 +29,7 @@
  * Only uncomment one weather provider below.
  *************************************************/
 // Open-Meteo https://api.open-meteo.com
-// #define WEATHER_OPENMETEO
+#define WEATHER_OPENMETEO
 
 // Open Weather https://openweathermap.org/darksky-openweather
 //#define WEATHER_OPENWEATHER
@@ -40,7 +40,7 @@
 // DarkSky Weather https://darksky.net/dev
 // WARNING: this API will only work through the end of 2021
 //#define WEATHER_DARKSKY
-#define WEATHER_DARKSKY
+//#define WEATHER_DARKSKY
 
 // Weather Underground
 // IMPORTANT: Do not use. No longer working.
